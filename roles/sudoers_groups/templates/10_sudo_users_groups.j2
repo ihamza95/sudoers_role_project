@@ -1,0 +1,6 @@
+# This file is managed by Ansible; changes may be overwritten
+# This file is managed by Ansible. All changes will be reverted
+# on the next Ansible run. Avoid making changes here.
+{% for group in sudo_groups -%}
+%{{ group.name }} ALL=({{ group.runas | default('ALL') }}) {{ group.commands | default('ALL') }}
+{% endfor -%}

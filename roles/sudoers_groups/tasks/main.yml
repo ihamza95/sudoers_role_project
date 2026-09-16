@@ -1,0 +1,116 @@
+---
+# roles/sudoers_groups/tasks/main.yml
+
+- name: Convert survey input to list (if provided as raw comma-separated string)
+  ansible.builtin.set_fact:
+    sudo_groups: "{{ sudo_groups_raw.split(',') | map('trim') | reject('equalto', '') | map('community.general.dict_kv', 'name') | list }}"
+  when:
+    - sudo_groups_raw is defined
+    - sudo_groups_raw | trim | length > 0
+
+- name: Validate and deploy sudoers group file
+  block:
+
+    - name: Ensure backup directory exists
+      ansible.builtin.file:
+        path: "{{ sudoers_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+    - name: Check if sudoers group file already exists
+      ansible.builtin.stat:
+        path: "{{ sudoers_file }}"
+      register: existing_sudoers_file
+
+    - name: Back up existing sudoers group file
+      ansible.builtin.copy:
+        src: "{{ sudoers_file }}"
+        dest: "{{ sudoers_backup_dir }}/10_sudo_users_groups.{{ ansible_date_time.iso8601_basic_short }}.bak"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0440'
+      when: existing_sudoers_file.stat.exists
+
+    - name: Validate sudo_groups is defined and iterable
+      ansible.builtin.assert:
+        that:
+          - sudo_groups is defined
+          - sudo_groups is iterable
+          - sudo_groups is not string
+        fail_msg: >-
+          sudo_groups must be a list (it can be empty). Got: {{ sudo_groups }}
+        success_msg: "sudo_groups is a valid list ({{ sudo_groups | length }} entries)"
+
+    - name: Validate each sudo_groups entry
+      ansible.builtin.assert:
+        that:
+          - item.name is defined
+          - item.name | length > 0
+          - item.name is match('^[A-Za-z0-9_-]+$')
+          - item.runas is not defined or item.runas is match('^[A-Za-z0-9_,: -]+$')
+          - item.commands is not defined or item.commands | length > 0
+        fail_msg: >-
+          Invalid sudo_groups entry: {{ item }}.
+          'name' must contain only letters, numbers, underscore, or hyphen.
+          'runas' (if set) must contain only letters, numbers, comma, colon, space, underscore, or hyphen.
+          'commands' (if set) must not be empty.
+        success_msg: "Entry '{{ item.name | default('UNKNOWN') }}' is valid"
+      loop: "{{ sudo_groups }}"
+      loop_control:
+        label: "{{ item.name | default('UNKNOWN') }}"
+
+    - name: Check for duplicate group names
+      ansible.builtin.assert:
+        that:
+          - sudo_groups | map(attribute='name') | list | length ==
+            sudo_groups | map(attribute='name') | unique | list | length
+        fail_msg: "Duplicate group names found in sudo_groups: {{ sudo_groups | map(attribute='name') | list }}"
+        success_msg: "No duplicate group names"
+      when: sudo_groups | length > 0
+
+    - name: Render and validate sudoers group file
+      ansible.builtin.template:
+        src: 10_sudo_users_groups.j2
+        dest: "{{ sudoers_file }}"
+        owner: root
+        group: root
+        mode: '0440'
+        validate: 'visudo -cf %s'
+      register: sudoers_deploy
+
+    - name: Report deployment result
+      ansible.builtin.debug:
+        msg: >-
+          Sudoers group file deployed successfully with {{ sudo_groups | length }}
+          group(s): {{ sudo_groups | map(attribute='name') | join(', ') }}
+      when: sudoers_deploy is succeeded
+
+  rescue:
+
+    - name: Restore previous sudoers group file from backup on failure
+      ansible.builtin.copy:
+        src: "{{ sudoers_backup_dir }}/10_sudo_users_groups.{{ ansible_date_time.iso8601_basic_short }}.bak"
+        dest: "{{ sudoers_file }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0440'
+      when: existing_sudoers_file.stat.exists
+      register: restore_result
+
+    - name: Report failure and restoration status
+      ansible.builtin.fail:
+        msg: >
+          Sudoers deployment failed and has been rolled back.
+          Error: {{ ansible_failed_result.msg | default('Unknown error') }}.
+          Restore status: {{ 'SUCCESS' if restore_result is succeeded else 'FAILED - manual intervention required' }}.
+      when: existing_sudoers_file.stat.exists | default(false)
+
+    - name: Fail with details
+      ansible.builtin.fail:
+        msg: >-
+          Deployment of sudoers group file failed and was rolled back
+          (if a prior version existed). Check the assert/validate errors above.

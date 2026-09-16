@@ -1,0 +1,22 @@
+---
+# Phase 2: Gather packages from all target servers (in parallel)
+# IMPORTANT: This file must be included with include_tasks from a play that targets the target_servers group
+
+- name: "Get installed packages from target host (Oracle Linux 9)"
+  shell: "{{ dnf_list_command }} | awk '{print $1}' | grep -v '^Loaded' | grep -v '^Available' | sort -u"
+  register: target_packages_raw
+  changed_when: false
+  failed_when: target_packages_raw.rc != 0 or target_packages_raw.stdout == ""
+
+- name: "Remove architecture suffix from package names"
+  set_fact:
+    target_packages_list: "{{ target_packages_raw.stdout_lines | map('regex_replace', package_arch_pattern, '') | list | unique }}"
+
+- name: "Display target package count"
+  debug:
+    msg: "Target host ({{ inventory_hostname }}): {{ target_packages_list | length }} unique packages collected"
+
+- name: "Store per-host package facts for comparison"
+  set_fact:
+    cacheable: yes
+    host_packages: "{{ target_packages_list }}"

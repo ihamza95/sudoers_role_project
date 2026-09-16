@@ -1,0 +1,32 @@
+---
+# Package Manager Role - Main Task File
+# NOTE: This role must be invoked from a playbook that provides the proper play-level context
+# 
+# Expected playbook structure:
+# - name: "Phase 1: Collect baseline packages"
+#   hosts: "{{ baseline_host_group }}"
+#   gather_facts: yes
+#   roles:
+#     - role: package_manager
+#       tasks_from: gather_baseline
+#
+# - name: "Phase 2: Collect target packages"
+#   hosts: "{{ target_servers_group }}"
+#   gather_facts: yes
+#   roles:
+#     - role: package_manager
+#       tasks_from: gather_targets
+#
+# - name: "Phase 3: Generate reports"
+#   hosts: localhost
+#   gather_facts: yes
+#   roles:
+#     - role: package_manager
+#       tasks_from: generate_report
+
+# Default play includes all tasks in sequence
+# User's main.yml should call specific tasks_from for finer control
+
+- include_tasks: gather_baseline.yml
+- include_tasks: gather_targets.yml
+- include_tasks: generate_report.yml

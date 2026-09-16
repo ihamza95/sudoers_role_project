@@ -1,0 +1,41 @@
+---
+# Example playbook to orchestrate the package_manager role phases
+
+- name: "Phase 1: Collect baseline packages"
+  hosts: baseline_host
+  gather_facts: yes
+  become: true
+  roles:
+    - role: package_manager
+      tasks_from: gather_baseline
+
+- name: "Phase 2: Collect target packages"
+  hosts: target_servers
+  gather_facts: yes
+  become: true
+  roles:
+    - role: package_manager
+      tasks_from: gather_targets
+
+- name: "Pre-check: Ensure baseline archive exists"
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: "Check baseline packages file exists"
+      stat:
+        path: "/tmp/baseline_packages.json"
+      register: baseline_file
+
+    - name: "Fail if baseline file missing"
+      fail:
+        msg: "Baseline packages file not found at /tmp/baseline_packages.json. Run Phase 1 first."
+      when: not baseline_file.stat.exists
+
+- name: "Phase 3: Generate reports"
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  roles:
+    - role: package_manager
+      tasks_from: generate_report

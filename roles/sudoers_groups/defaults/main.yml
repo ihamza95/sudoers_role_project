@@ -1,0 +1,25 @@
+---
+# roles/sudoers_groups/defaults/main.yml
+#
+# Lowest-precedence variables — override via group_vars, host_vars,
+# survey, or extra vars in AAP as needed.
+
+# List of groups to grant sudo access to. Empty by default (safe fallback:
+# if nothing is passed in, no groups are granted).
+#
+# Each entry supports:
+#   name:     required — group name, letters/numbers/underscore/hyphen only
+#   runas:    optional — defaults to ALL
+#   commands: optional — defaults to ALL
+#
+# Example:
+# sudo_groups:
+#   - name: linux
+#   - name: CM-sudo
+#   - name: cote_pile_sr_sudo
+#     runas: root
+#     commands: "/usr/bin/systemctl restart app"
+sudo_groups: []
+
+sudoers_file: /etc/sudoers.d/10_sudo_users_groups
+sudoers_backup_dir: /etc/sudoers.d/backups

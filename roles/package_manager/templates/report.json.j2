@@ -1,0 +1,30 @@
+{
+  "report_metadata": {
+    "generated_at": "{{ report_format_data.generated_at }}",
+    "report_type": "package_baseline_compliance",
+    "version": "1.0"
+  },
+  "baseline": {
+    "hostname": "{{ report_format_data.baseline_hostname }}",
+    "total_packages": {{ report_format_data.baseline_count }}
+  },
+  "summary": {
+    "total_targets_scanned": {{ report_format_data.summary.total_targets }},
+    "targets_with_extra_packages": {{ report_format_data.summary.targets_with_extra_packages }}
+  },
+  "targets": [
+    {% for target in report_format_data.targets %}
+    {
+      "hostname": "{{ target.hostname }}",
+      "total_packages": {{ target.total_packages }},
+      "extra_package_count": {{ target.extra_package_count }},
+      "compliance_status": "{% if target.extra_package_count == 0 %}compliant{% else %}deviation{% endif %}",
+      "extra_packages": [
+        {% for package in target.extra_packages %}
+        "{{ package }}"{% if not loop.last %},{% endif %}
+        {% endfor %}
+      ]
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ]
+}

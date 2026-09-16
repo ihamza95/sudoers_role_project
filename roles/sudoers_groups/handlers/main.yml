@@ -1,0 +1,4 @@
+---
+# roles/sudoers_groups/handlers/main.yml
+# No handlers currently needed — the template task validates and writes
+# directly via `validate: visudo -cf %s`, so there's nothing to notify.

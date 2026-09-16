@@ -1,0 +1,21 @@
+---
+# Package Manager Role Variables
+
+# Directories (default to /tmp for testing; override in production)
+report_dir: "/tmp"
+report_html_dir: "{{ report_dir }}/html"
+report_json_dir: "{{ report_dir }}/json"
+report_csv_dir: "{{ report_dir }}/csv"
+
+# Baseline configuration
+baseline_host: "baseline_host"
+target_group: "target_servers"
+
+# Report naming
+timestamp_format: "%Y-%m-%d_%H-%M-%S"
+
+# DNF command for Oracle Linux 9
+dnf_list_command: "dnf list installed"
+
+# Package extraction pattern (removes .x86_64, .noarch, .i686, etc.)
+package_arch_pattern: '(\.[a-z0-9]+)$'

@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  role_name: sudoers_groups
+  description: Manages /etc/sudoers.d group-based sudo access with backup and syntax validation
+  author: your_team
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+    - name: Ubuntu
+      versions:
+        - all
+
+dependencies: []
