@@ -1,0 +1,45 @@
+---
+# Package Manager Compliance Workflow
+# Compares installed packages on target servers against a baseline
+# Reports servers with unapproved (extra) packages
+
+- name: "Phase 1: Push baseline file to target servers"
+  hosts: "{{ target_group | default('target_servers') }}"
+  gather_facts: yes
+  vars:
+    ansible_python_interpreter: auto_silent
+  tasks:
+    - name: "Include push baseline task"
+      include_tasks: roles/package_manager/tasks/gather_baseline.yml
+
+- name: "Phase 2: Collect installed packages and identify unapproved ones"
+  hosts: "{{ target_group | default('target_servers') }}"
+  gather_facts: yes
+  vars:
+    ansible_python_interpreter: auto_silent
+  tasks:
+    - name: "Include gather and compare tasks"
+      include_tasks: roles/package_manager/tasks/gather_targets.yml
+
+- name: "Phase 3: Generate compliance report"
+  hosts: localhost
+  gather_facts: yes
+  vars:
+    ansible_python_interpreter: auto_silent
+  tasks:
+    - name: "Include generate compliance report task"
+      include_tasks: roles/package_manager/tasks/generate_compliance_report.yml
+
+- name: "Summary"
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: "Display report location"
+      debug:
+        msg: |
+          === Compliance Reports Ready ===
+          Text Report: {{ report_dir }}/compliance_report.txt
+          JSON Report: {{ report_json_dir }}/compliance_report.json
+          CSV Report: {{ report_csv_dir }}/compliance_report.csv
+          
+          Non-Compliant Servers List: {{ report_dir }}/non_compliant_servers.txt

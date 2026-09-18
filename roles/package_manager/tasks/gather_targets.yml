@@ -1,6 +1,16 @@
 ---
-# Phase 2: Gather packages from all target servers (in parallel)
+# Phase 2: Gather packages from all target servers and compare with baseline
 # IMPORTANT: This file must be included with include_tasks from a play that targets the target_servers group
+
+- name: "Load baseline packages from target server"
+  shell: "cat /tmp/baseline"
+  register: baseline_content
+  changed_when: false
+  failed_when: baseline_content.rc != 0
+
+- name: "Parse baseline packages into list"
+  set_fact:
+    baseline_packages_list: "{{ baseline_content.stdout_lines | map('trim') | reject('equalto', '') | list }}"
 
 - name: "Get installed packages from target host (Oracle Linux 9)"
   shell: "{{ dnf_list_command }} | awk '{print $1}' | grep -v '^Loaded' | grep -v '^Available' | sort -u"
@@ -16,7 +26,23 @@
   debug:
     msg: "Target host ({{ inventory_hostname }}): {{ target_packages_list | length }} unique packages collected"
 
-- name: "Store per-host package facts for comparison"
+- name: "Find unapproved packages (installed but not in baseline)"
+  set_fact:
+    unapproved_packages: "{{ target_packages_list | difference(baseline_packages_list) }}"
+
+- name: "Flag server if unapproved packages found"
+  set_fact:
+    has_unapproved: "{{ unapproved_packages | length > 0 }}"
+
+- name: "Display unapproved packages count"
+  debug:
+    msg: "Target host ({{ inventory_hostname }}): {{ unapproved_packages | length }} unapproved packages found"
+  when: has_unapproved
+
+- name: "Store per-host package facts for reporting"
   set_fact:
     cacheable: yes
     host_packages: "{{ target_packages_list }}"
+    host_baseline: "{{ baseline_packages_list }}"
+    host_unapproved: "{{ unapproved_packages }}"
+    host_has_issues: "{{ has_unapproved }}"

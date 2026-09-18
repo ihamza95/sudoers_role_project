@@ -1,0 +1,102 @@
+---
+# Phase 3: Generate compliance report of servers with unapproved packages
+# IMPORTANT: This file must be included with include_tasks from a play that targets localhost
+
+- name: "Ensure report directory exists on controller"
+  run_once: yes
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ report_dir }}"
+    - "{{ report_html_dir }}"
+    - "{{ report_json_dir }}"
+    - "{{ report_csv_dir }}"
+
+- name: "Collect servers with unapproved packages"
+  set_fact:
+    servers_with_issues: []
+  run_once: yes
+
+- name: "Build list of non-compliant servers"
+  set_fact:
+    servers_with_issues: "{{ servers_with_issues + [{'hostname': item, 'unapproved_count': hostvars[item].get('host_unapproved', []) | length, 'unapproved_packages': hostvars[item].get('host_unapproved', [])}] }}"
+  loop: "{{ groups[target_group] }}"
+  when: hostvars[item].get('host_has_issues', false) | bool
+  run_once: yes
+
+- name: "Display compliance summary"
+  debug:
+    msg: "Compliance Report: {{ servers_with_issues | length }} server(s) with unapproved packages out of {{ groups[target_group] | length }} total targets"
+  run_once: yes
+
+- name: "Generate unapproved packages text report"
+  copy:
+    content: |
+      Compliance Report - Servers with Unapproved Packages
+      =====================================================
+      Generated: {{ ansible_date_time.iso8601 }}
+      
+      Total Target Servers: {{ groups[target_group] | length }}
+      Servers with Issues: {{ servers_with_issues | length }}
+      
+      {% if servers_with_issues %}
+      --- Non-Compliant Servers ---
+      {% for server in servers_with_issues | sort(attribute='hostname') %}
+      
+      Server: {{ server.hostname }}
+      Unapproved Package Count: {{ server.unapproved_count }}
+      Unapproved Packages:
+      {% for pkg in server.unapproved_packages | sort %}
+        - {{ pkg }}
+      {% endfor %}
+      {% endfor %}
+      {% else %}
+      All servers are compliant! No unapproved packages found.
+      {% endif %}
+    dest: "{{ report_dir }}/compliance_report.txt"
+  delegate_to: localhost
+  run_once: yes
+
+- name: "Generate JSON compliance report"
+  copy:
+    content: "{{ {'timestamp': ansible_date_time.iso8601, 'total_targets': groups[target_group] | length, 'servers_with_issues_count': servers_with_issues | length, 'non_compliant_servers': servers_with_issues | sort(attribute='hostname')} | to_nice_json }}"
+    dest: "{{ report_json_dir }}/compliance_report.json"
+  delegate_to: localhost
+  run_once: yes
+
+- name: "Generate CSV compliance report"
+  block:
+    - name: "Build CSV content"
+      set_fact:
+        csv_content: |
+          Hostname,Unapproved_Package_Count,Unapproved_Packages
+          {% for server in servers_with_issues | sort(attribute='hostname') %}
+          {{ server.hostname }},{{ server.unapproved_count }},"{{ server.unapproved_packages | join('; ')}}"
+          {% endfor %}
+      run_once: yes
+
+    - name: "Write CSV report"
+      copy:
+        content: "{{ csv_content }}"
+        dest: "{{ report_csv_dir }}/compliance_report.csv"
+      delegate_to: localhost
+      run_once: yes
+
+- name: "Create simple servers-with-issues list file"
+  copy:
+    content: |
+      {% if servers_with_issues %}
+      {% for server in servers_with_issues | map(attribute='hostname') | sort %}
+      {{ server }}
+      {% endfor %}
+      {% endif %}
+    dest: "{{ report_dir }}/non_compliant_servers.txt"
+  delegate_to: localhost
+  run_once: yes
+
+- name: "Display report location"
+  debug:
+    msg: "Compliance reports generated in {{ report_dir }}/"
+  run_once: yes

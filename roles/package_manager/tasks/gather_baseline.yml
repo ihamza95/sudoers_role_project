@@ -1,42 +1,25 @@
 ---
-# Phase 1: Gather baseline packages from the baseline host
-# IMPORTANT: This file must be included with include_tasks from a play that targets the baseline_host group
+# Phase 1: Push baseline file to target servers
+# IMPORTANT: This file must be included with include_tasks from a play that targets the target_servers group
 
-- name: "Ensure reports directory exists"
-  run_once: yes
-  delegate_to: localhost
+- name: "Ensure /tmp exists on target servers"
   file:
-    path: "{{ item }}"
+    path: /tmp
     state: directory
     mode: '0755'
-  loop:
-    - "{{ report_dir }}"
-    - "{{ report_html_dir }}"
-    - "{{ report_json_dir }}"
-    - "{{ report_csv_dir }}"
 
-- name: "Get installed packages from baseline host (Oracle Linux 9)"
-  shell: "{{ dnf_list_command }} | awk '{print $1}' | grep -v '^Loaded' | grep -v '^Available' | sort -u"
-  register: baseline_packages_raw
-  changed_when: false
-  failed_when: baseline_packages_raw.rc != 0 or baseline_packages_raw.stdout == ""
-
-- name: "Remove architecture suffix from package names"
-  set_fact:
-    baseline_packages_list: "{{ baseline_packages_raw.stdout_lines | map('regex_replace', package_arch_pattern, '') | list | unique }}"
-
-- name: "Display baseline package count"
-  debug:
-    msg: "Baseline host ({{ inventory_hostname }}): {{ baseline_packages_list | length }} unique packages collected"
-
-- name: "Save baseline packages to file for audit trail"
+- name: "Copy baseline file from controller to target servers"
   copy:
-    content: "{{ baseline_packages_list | to_nice_json }}"
-    dest: "{{ report_dir }}/baseline_packages.json"
-  delegate_to: localhost
-  run_once: yes
+    src: "roles/package_manager/files/baseline"
+    dest: "/tmp/baseline"
+    mode: '0644'
 
-- name: "Set baseline as global fact for comparison"
-  set_fact:
-    cacheable: yes
-    baseline_packages: "{{ baseline_packages_list }}"
+- name: "Verify baseline file copied successfully"
+  stat:
+    path: /tmp/baseline
+  register: baseline_stat
+  failed_when: not baseline_stat.stat.exists
+
+- name: "Display baseline file status on target"
+  debug:
+    msg: "Baseline file successfully deployed to {{ inventory_hostname }}:/tmp/baseline"

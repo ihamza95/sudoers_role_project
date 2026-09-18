@@ -2,31 +2,34 @@
 # Package Manager Role - Main Task File
 # NOTE: This role must be invoked from a playbook that provides the proper play-level context
 # 
+# NEW Workflow (Compliance-Based):
+# Phase 1: Push baseline file to target servers (/tmp/baseline)
+# Phase 2: Collect packages from targets and compare with baseline (identify unapproved packages)
+# Phase 3: Generate compliance report listing servers with unapproved packages
+#
 # Expected playbook structure:
-# - name: "Phase 1: Collect baseline packages"
-#   hosts: "{{ baseline_host_group }}"
+# - name: "Phase 1: Push baseline to targets"
+#   hosts: "{{ target_servers_group }}"
 #   gather_facts: yes
 #   roles:
 #     - role: package_manager
 #       tasks_from: gather_baseline
 #
-# - name: "Phase 2: Collect target packages"
+# - name: "Phase 2: Collect and compare packages"
 #   hosts: "{{ target_servers_group }}"
 #   gather_facts: yes
 #   roles:
 #     - role: package_manager
 #       tasks_from: gather_targets
 #
-# - name: "Phase 3: Generate reports"
+# - name: "Phase 3: Generate compliance report"
 #   hosts: localhost
 #   gather_facts: yes
 #   roles:
 #     - role: package_manager
-#       tasks_from: generate_report
+#       tasks_from: generate_compliance_report
 
-# Default play includes all tasks in sequence
-# User's main.yml should call specific tasks_from for finer control
-
+# This file can be used as default inclusion or each phase can be called separately
 - include_tasks: gather_baseline.yml
 - include_tasks: gather_targets.yml
-- include_tasks: generate_report.yml
+- include_tasks: generate_compliance_report.yml
