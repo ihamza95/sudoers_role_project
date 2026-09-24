@@ -1,7 +1,7 @@
 ---
-# Phase 3: Compare target packages against baseline and generate reports
+# Phase 3: Consolidated report (detailed + compliance)
 # IMPORTANT: This file must be included with include_tasks from a play that targets localhost
-# This phase requires facts from baseline and all target servers to be available
+
 - name: "Resolve baseline packages list (from controller baseline file)"
   set_fact:
     baseline_packages_list: "{{ lookup('file', 'roles/package_manager/files/baseline').splitlines() | map('trim') | reject('equalto','') | list }}"
@@ -18,7 +18,7 @@
       summary:
         total_targets: 0
         targets_with_extra_packages: 0
-        
+
 - name: "Collect target package data and calculate differences"
   set_fact:
     report_data: "{{ report_data | combine({
@@ -40,25 +40,37 @@
       }
     }, recursive=True) }}"
 
+- name: "Build list of non-compliant servers"
+  set_fact:
+    servers_with_issues: []
+  run_once: yes
+
+- name: "Accumulate non-compliant server entries"
+  set_fact:
+    servers_with_issues: "{{ servers_with_issues + [{'hostname': item.hostname, 'unapproved_count': item.extra_package_count, 'unapproved_packages': item.extra_packages}] }}"
+  loop: "{{ report_data.targets }}"
+  when: item.extra_package_count > 0
+  run_once: yes
+
 - name: "Generate current timestamp for filenames"
   set_fact:
     report_timestamp: "{{ ansible_date_time.strftime(timestamp_format) }}"
 
-- name: "Generate JSON report"
+- name: "Generate detailed JSON report"
   template:
     src: report.json.j2
     dest: "{{ report_json_dir }}/package_report_{{ report_timestamp }}.json"
   vars:
     report_format_data: "{{ report_data }}"
 
-- name: "Generate HTML report"
+- name: "Generate detailed HTML report"
   template:
     src: report.html.j2
     dest: "{{ report_html_dir }}/package_report_{{ report_timestamp }}.html"
   vars:
     report_format_data: "{{ report_data }}"
 
-- name: "Generate CSV report"
+- name: "Generate detailed CSV report"
   copy:
     content: |
       Hostname,Total Packages,Extra Package Count,Extra Packages
@@ -67,6 +79,71 @@
       {% endfor %}
     dest: "{{ report_csv_dir }}/package_report_{{ report_timestamp }}.csv"
 
+- name: "Generate unapproved packages text report (compliance)"
+  copy:
+    content: |
+      Compliance Report - Servers with Unapproved Packages
+      =====================================================
+      Generated: {{ ansible_date_time.iso8601 }}
+
+      Total Target Servers: {{ report_data.summary.total_targets }}
+      Servers with Issues: {{ servers_with_issues | length }}
+
+      {% if servers_with_issues %}
+      --- Non-Compliant Servers ---
+      {% for server in servers_with_issues | sort(attribute='hostname') %}
+
+      Server: {{ server.hostname }}
+      Unapproved Package Count: {{ server.unapproved_count }}
+      Unapproved Packages:
+      {% for pkg in server.unapproved_packages | sort %}
+        - {{ pkg }}
+      {% endfor %}
+      {% endfor %}
+      {% else %}
+      All servers are compliant! No unapproved packages found.
+      {% endif %}
+    dest: "{{ report_dir }}/compliance_report.txt"
+  delegate_to: localhost
+  run_once: yes
+
+- name: "Generate JSON compliance report"
+  copy:
+    content: "{{ {'timestamp': ansible_date_time.iso8601, 'total_targets': report_data.summary.total_targets, 'servers_with_issues_count': servers_with_issues | length, 'non_compliant_servers': servers_with_issues | sort(attribute='hostname')} | to_nice_json }}"
+    dest: "{{ report_json_dir }}/compliance_report.json"
+  delegate_to: localhost
+  run_once: yes
+
+- name: "Generate CSV compliance report"
+  block:
+    - name: "Build CSV content"
+      set_fact:
+        csv_content: |
+          Hostname,Unapproved_Package_Count,Unapproved_Packages
+          {% for server in servers_with_issues | sort(attribute='hostname') %}
+          {{ server.hostname }},{{ server.unapproved_count }},"{{ server.unapproved_packages | join('; ')}}"
+          {% endfor %}
+      run_once: yes
+
+    - name: "Write CSV report"
+      copy:
+        content: "{{ csv_content }}"
+        dest: "{{ report_csv_dir }}/compliance_report.csv"
+      delegate_to: localhost
+      run_once: yes
+
+- name: "Create simple servers-with-issues list file"
+  copy:
+    content: |
+      {% if servers_with_issues %}
+      {% for server in servers_with_issues | map(attribute='hostname') | sort %}
+      {{ server }}
+      {% endfor %}
+      {% endif %}
+    dest: "{{ report_dir }}/non_compliant_servers.txt"
+  delegate_to: localhost
+  run_once: yes
+
 - name: "Display report summary"
   debug:
     msg: |
@@ -74,7 +151,7 @@
       PACKAGE BASELINE COMPLIANCE REPORT
       ========================================
       Generated: {{ report_data.generated_at }}
-      Baseline Host: {{ report_data.baseline_hostname }}
+      Baseline Source: {{ report_data.baseline_hostname }}
       Baseline Package Count: {{ report_data.baseline_count }}
       
       Target Servers Scanned: {{ report_data.summary.total_targets }}
@@ -84,6 +161,10 @@
       - JSON: {{ report_json_dir }}/package_report_{{ report_timestamp }}.json
       - HTML: {{ report_html_dir }}/package_report_{{ report_timestamp }}.html
       - CSV: {{ report_csv_dir }}/package_report_{{ report_timestamp }}.csv
+      - Compliance Text: {{ report_dir }}/compliance_report.txt
+      - Compliance JSON: {{ report_json_dir }}/compliance_report.json
+      - Compliance CSV: {{ report_csv_dir }}/compliance_report.csv
+      - Non-compliant list: {{ report_dir }}/non_compliant_servers.txt
       ========================================
 
 - name: "Display detailed report for each target"

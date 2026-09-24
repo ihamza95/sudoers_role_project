@@ -32,4 +32,4 @@
 # This file can be used as default inclusion or each phase can be called separately
 - include_tasks: gather_baseline.yml
 - include_tasks: gather_targets.yml
-- include_tasks: generate_compliance_report.yml
+- include_tasks: generate_report.yml
