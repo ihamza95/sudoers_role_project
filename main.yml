@@ -1,0 +1,183 @@
+---
+- name: "Phase 1 - Deploy baseline and collect installed packages"
+  hosts: "{{ target_group | default('target_servers') }}"
+  become: true
+  gather_facts: yes
+  tasks:
+    - name: "Ensure /tmp exists on target servers"
+      file:
+        path: /tmp
+        state: directory
+        mode: '0755'
+
+    - name: "Copy baseline file from controller to target servers"
+      copy:
+        src: "roles/package_manager/files/baseline"
+        dest: "/tmp/baseline"
+        mode: '0644'
+
+    - name: "Read baseline file from target"
+      slurp:
+        src: "/tmp/baseline"
+      register: baseline_file
+
+    - name: "Parse baseline packages into list"
+      set_fact:
+        baseline_packages_list: "{{ (baseline_file.content | b64decode).splitlines() | map('trim') | reject('equalto', '') | unique | list }}"
+
+    - name: "Get installed packages from target host (Oracle Linux 9)"
+      shell: "{{ dnf_list_command }} | awk '{print $1}' | grep -v '^Loaded' | grep -v '^Available' | sort -u"
+      register: target_packages_raw
+      changed_when: false
+      failed_when: target_packages_raw.rc != 0
+
+    - name: "Remove architecture suffix from package names"
+      set_fact:
+        target_packages_list: "{{ target_packages_raw.stdout_lines | map('regex_replace', package_arch_pattern, '') | list | unique }}"
+
+    - name: "Find unapproved packages (installed but not in baseline)"
+      set_fact:
+        unapproved_packages: "{{ target_packages_list | difference(baseline_packages_list) }}"
+
+    - name: "Store per-host package facts for reporting"
+      set_fact:
+        cacheable: yes
+        host_packages: "{{ target_packages_list }}"
+        host_baseline: "{{ baseline_packages_list }}"
+        host_unapproved: "{{ unapproved_packages }}"
+        host_has_issues: "{{ (unapproved_packages | length) > 0 }}"
+
+- name: "Phase 2 - Aggregate target facts and generate report"
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  tasks:
+    - name: "Set target host list"
+      set_fact:
+        target_hosts: "{{ groups[target_group | default('target_servers')] | default([]) }}"
+
+    - name: "Resolve baseline packages list from controller file"
+      set_fact:
+        baseline_packages_list: "{{ lookup('file', 'roles/package_manager/files/baseline').splitlines() | map('trim') | reject('equalto', '') | unique | list }}"
+
+    - name: "Initialize report data structure"
+      set_fact:
+        report_data:
+          generated_at: "{{ ansible_date_time.iso8601 }}"
+          baseline_hostname: "controller:roles/package_manager/files/baseline"
+          baseline_packages_list: "{{ baseline_packages_list }}"
+          baseline_count: "{{ baseline_packages_list | length }}"
+          targets: []
+          summary:
+            total_targets: 0
+            targets_with_extra_packages: 0
+
+    - name: "Build target report entries"
+      set_fact:
+        report_data: >-
+          {{
+            report_data | combine(
+              {
+                'targets': (report_data.targets | default([])) + [{
+                  'hostname': item,
+                  'total_packages': (hostvars[item].host_packages | default([]) | length),
+                  'extra_packages': (hostvars[item].host_packages | default([]) | difference(baseline_packages_list) | sort),
+                  'extra_package_count': (hostvars[item].host_packages | default([]) | difference(baseline_packages_list) | length)
+                }]
+              },
+              recursive=True
+            )
+          }}
+      loop: "{{ target_hosts }}"
+      when: hostvars[item].host_packages is defined
+
+    - name: "Calculate summary statistics"
+      set_fact:
+        report_data: >-
+          {{
+            report_data | combine(
+              {
+                'summary': {
+                  'total_targets': (report_data.targets | default([]) | length),
+                  'targets_with_extra_packages': (report_data.targets | default([]) | selectattr('extra_package_count', '>', 0) | list | length)
+                }
+              },
+              recursive=True
+            )
+          }}
+
+    - name: "Build list of non-compliant servers"
+      set_fact:
+        servers_with_issues: "{{ servers_with_issues | default([]) + [{'hostname': item.hostname, 'unapproved_count': item.extra_package_count, 'unapproved_packages': item.extra_packages}] }}"
+      loop: "{{ report_data.targets | default([]) }}"
+      when: item.extra_package_count | int > 0
+
+    - name: "Create output directories"
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ report_dir | default('/tmp') }}"
+        - "{{ report_dir | default('/tmp') }}/html"
+        - "{{ report_dir | default('/tmp') }}/json"
+        - "{{ report_dir | default('/tmp') }}/csv"
+
+    - name: "Generate detailed JSON report"
+      copy:
+        content: "{{ report_data | to_nice_json }}"
+        dest: "{{ report_dir | default('/tmp') }}/json/package_report_{{ ansible_date_time.strftime(timestamp_format) }}.json"
+
+    - name: "Generate compliance text report"
+      copy:
+        content: |
+          Compliance Report - Servers with Unapproved Packages
+          =====================================================
+          Generated: {{ ansible_date_time.iso8601 }}
+
+          Total Target Servers: {{ report_data.summary.total_targets }}
+          Servers with Issues: {{ (servers_with_issues | default([])) | length }}
+
+          {% if servers_with_issues is defined and servers_with_issues %}
+          --- Non-Compliant Servers ---
+          {% for server in servers_with_issues | sort(attribute='hostname') %}
+
+          Server: {{ server.hostname }}
+          Unapproved Package Count: {{ server.unapproved_count }}
+          Unapproved Packages:
+          {% for pkg in server.unapproved_packages | sort %}
+            - {{ pkg }}
+          {% endfor %}
+          {% endfor %}
+          {% else %}
+          All servers are compliant! No unapproved packages found.
+          {% endif %}
+        dest: "{{ report_dir | default('/tmp') }}/compliance_report.txt"
+
+    - name: "Generate compliance CSV report"
+      copy:
+        content: |
+          Hostname,Unapproved_Package_Count,Unapproved_Packages
+          {% for server in (servers_with_issues | default([])) | sort(attribute='hostname') %}
+          {{ server.hostname }},{{ server.unapproved_count }},"{{ server.unapproved_packages | join('; ') }}"
+          {% endfor %}
+        dest: "{{ report_dir | default('/tmp') }}/csv/compliance_report.csv"
+
+    - name: "Display final report summary"
+      debug:
+        msg: |
+          ========================================
+          PACKAGE BASELINE COMPLIANCE REPORT
+          ========================================
+          Generated: {{ report_data.generated_at }}
+          Baseline Source: {{ report_data.baseline_hostname }}
+          Baseline Package Count: {{ report_data.baseline_count }}
+
+          Target Servers Scanned: {{ report_data.summary.total_targets }}
+          Servers with Extra Packages: {{ report_data.summary.targets_with_extra_packages }}
+
+          Reports generated in:
+          - JSON: {{ report_dir | default('/tmp') }}/json/package_report_{{ ansible_date_time.strftime(timestamp_format) }}.json
+          - Compliance Text: {{ report_dir | default('/tmp') }}/compliance_report.txt
+          - Compliance CSV: {{ report_dir | default('/tmp') }}/csv/compliance_report.csv
+          ========================================
