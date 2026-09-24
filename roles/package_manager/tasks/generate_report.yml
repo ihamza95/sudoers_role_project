@@ -4,20 +4,29 @@
 
 - name: "Resolve baseline packages list (from controller baseline file)"
   set_fact:
-    baseline_packages_list: "{{ lookup('file', 'roles/package_manager/files/baseline').splitlines() | map('trim') | reject('equalto','') | unique | list }}"
+    baseline_packages_list: "{{ lookup('file', 'roles/package_manager/files/baseline').splitlines() | map('trim') | reject('equalto', '') | unique | list }}"
   run_once: yes
+  delegate_to: localhost
+
+- name: "Set target host list"
+  set_fact:
+    target_hosts: "{{ groups[target_group | default('target_servers')] | default([]) }}"
+  run_once: yes
+  delegate_to: localhost
 
 - name: "Initialize report data structure"
   set_fact:
     report_data:
       generated_at: "{{ ansible_date_time.iso8601 }}"
       baseline_hostname: "controller:roles/package_manager/files/baseline"
-      baseline_packages_list: "{{ baseline_packages_list }}"
-      baseline_count: "{{ baseline_packages_list | length }}"
+      baseline_packages_list: "{{ baseline_packages_list | default([]) }}"
+      baseline_count: "{{ (baseline_packages_list | default([])) | length }}"
       targets: []
       summary:
         total_targets: 0
         targets_with_extra_packages: 0
+  run_once: yes
+  delegate_to: localhost
 
 - name: "Debug: show initialized report_data"
   debug:
@@ -28,41 +37,59 @@
 - name: "Collect target package data and calculate differences"
   set_fact:
     report_data: >-
-      {{ report_data | combine({
-        'targets': report_data.targets + [{
-          'hostname': item,
-          'total_packages': (hostvars[item].get('host_packages', []) | length),
-          'extra_packages': (hostvars[item].get('host_packages', []) | difference(baseline_packages_list) | sort),
-          'extra_package_count': (hostvars[item].get('host_packages', []) | difference(baseline_packages_list) | length)
-        }]
-      }, recursive=True) }}
-  loop: "{{ groups[target_group] }}"
+      {{
+        report_data | combine(
+          {
+            'targets': (report_data.targets | default([])) + [{
+              'hostname': item,
+              'total_packages': (hostvars[item].get('host_packages', []) | length),
+              'extra_packages': (hostvars[item].get('host_packages', []) | difference(baseline_packages_list | default([])) | sort),
+              'extra_package_count': (hostvars[item].get('host_packages', []) | difference(baseline_packages_list | default([])) | length)
+            }]
+          },
+          recursive=True
+        )
+      }}
+  loop: "{{ target_hosts }}"
+  delegate_to: localhost
+  run_once: yes
 
 - name: "Calculate summary statistics"
   set_fact:
     report_data: >-
-      {{ report_data | combine({
-        'summary': {
-          'total_targets': report_data.targets | length,
-          'targets_with_extra_packages': report_data.targets | selectattr('extra_package_count', '>', 0) | list | length
-        }
-      }, recursive=True) }}
+      {{
+        report_data | combine(
+          {
+            'summary': {
+              'total_targets': (report_data.targets | default([]) | length),
+              'targets_with_extra_packages': (report_data.targets | default([]) | selectattr('extra_package_count', '>', 0) | list | length)
+            }
+          },
+          recursive=True
+        )
+      }}
+  run_once: yes
+  delegate_to: localhost
 
 - name: "Build list of non-compliant servers"
   set_fact:
     servers_with_issues: []
   run_once: yes
+  delegate_to: localhost
 
 - name: "Accumulate non-compliant server entries"
   set_fact:
-    servers_with_issues: "{{ servers_with_issues + [{'hostname': item['hostname'], 'unapproved_count': item['extra_package_count'], 'unapproved_packages': item['extra_packages']}] }}"
-  loop: "{{ report_data.targets }}"
-  when: item['extra_package_count'] > 0
+    servers_with_issues: "{{ servers_with_issues + [{'hostname': item.hostname, 'unapproved_count': item.extra_package_count, 'unapproved_packages': item.extra_packages}] }}"
+  loop: "{{ report_data.targets | default([]) }}"
+  when: item.extra_package_count | int > 0
   run_once: yes
+  delegate_to: localhost
 
 - name: "Generate current timestamp for filenames"
   set_fact:
     report_timestamp: "{{ ansible_date_time.strftime(timestamp_format) }}"
+  run_once: yes
+  delegate_to: localhost
 
 - name: "Generate detailed JSON report"
   template:
@@ -70,6 +97,8 @@
     dest: "{{ report_json_dir }}/package_report_{{ report_timestamp }}.json"
   vars:
     report_format_data: "{{ report_data }}"
+  delegate_to: localhost
+  run_once: yes
 
 - name: "Generate detailed HTML report"
   template:
@@ -77,15 +106,19 @@
     dest: "{{ report_html_dir }}/package_report_{{ report_timestamp }}.html"
   vars:
     report_format_data: "{{ report_data }}"
+  delegate_to: localhost
+  run_once: yes
 
 - name: "Generate detailed CSV report"
   copy:
     content: |
       Hostname,Total Packages,Extra Package Count,Extra Packages
-      {% for target in report_data.targets %}
+      {% for target in report_data.targets | default([]) %}
       "{{ target.hostname }}",{{ target.total_packages }},{{ target.extra_package_count }},"{{ target.extra_packages | join('; ') }}"
       {% endfor %}
     dest: "{{ report_csv_dir }}/package_report_{{ report_timestamp }}.csv"
+  delegate_to: localhost
+  run_once: yes
 
 - name: "Generate unapproved packages text report (compliance)"
   copy:
@@ -129,9 +162,10 @@
         csv_content: |
           Hostname,Unapproved_Package_Count,Unapproved_Packages
           {% for server in servers_with_issues | sort(attribute='hostname') %}
-          {{ server.hostname }},{{ server.unapproved_count }},"{{ server.unapproved_packages | join('; ')}}"
+          {{ server.hostname }},{{ server.unapproved_count }},"{{ server.unapproved_packages | join('; ') }}"
           {% endfor %}
       run_once: yes
+      delegate_to: localhost
 
     - name: "Write CSV report"
       copy:
@@ -161,10 +195,10 @@
       Generated: {{ report_data.generated_at }}
       Baseline Source: {{ report_data.baseline_hostname }}
       Baseline Package Count: {{ report_data.baseline_count }}
-      
+
       Target Servers Scanned: {{ report_data.summary.total_targets }}
       Servers with Extra Packages: {{ report_data.summary.targets_with_extra_packages }}
-      
+
       Reports generated in:
       - JSON: {{ report_json_dir }}/package_report_{{ report_timestamp }}.json
       - HTML: {{ report_html_dir }}/package_report_{{ report_timestamp }}.html
@@ -174,17 +208,21 @@
       - Compliance CSV: {{ report_csv_dir }}/compliance_report.csv
       - Non-compliant list: {{ report_dir }}/non_compliant_servers.txt
       ========================================
+  run_once: yes
+  delegate_to: localhost
 
 - name: "Display detailed report for each target"
   debug:
     msg: |
-      Target: {{ item['hostname'] }}
-      Total Packages: {{ item['total_packages'] }}
-      Extra Packages: {{ item['extra_package_count'] }}
-      {% if item['extra_package_count'] > 0 %}
+      Target: {{ item.hostname }}
+      Total Packages: {{ item.total_packages }}
+      Extra Packages: {{ item.extra_package_count }}
+      {% if item.extra_package_count | int > 0 %}
       Extra Package List:
-        {{ item['extra_packages'] | join('\n  - ') }}
+        {{ item.extra_packages | join('\n  - ') }}
       {% endif %}
-  loop: "{{ report_data.targets }}"
+  loop: "{{ report_data.targets | default([]) }}"
   loop_control:
-    label: "{{ item['hostname'] }}"
+    label: "{{ item.hostname }}"
+  run_once: yes
+  delegate_to: localhost
