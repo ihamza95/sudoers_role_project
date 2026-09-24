@@ -3,7 +3,6 @@
 # Entry point for AAP Job Template — points to this file, targets `all`
 # (or scope via the Job Template's "Limit" field).
 
-- name: Manage sudoers group access
   hosts: all
   become: true
 
@@ -13,8 +12,8 @@
 # Package Manager Playbook - Baseline & Compliance
 # Uncomment to run the package baseline comparison
 # Usage: ansible-playbook -i inventory/hosts.yml site.yml --tags package_manager
-- name: Package Baseline and Compliance Report
-  hosts: "{{ baseline_host | default('baseline_host') }}, {{ target_group | default('target_servers') }}"
+ name: Package Baseline and Compliance Report
+  hosts: "{{ target_group | default('target_servers') }}"
   gather_facts: yes
   tags:
     - package_manager

@@ -8,7 +8,6 @@ report_json_dir: "{{ report_dir }}/json"
 report_csv_dir: "{{ report_dir }}/csv"
 
 # Baseline configuration
-baseline_host: "baseline_host"
 target_group: "target_servers"
 
 # Report naming

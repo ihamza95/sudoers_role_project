@@ -2,16 +2,16 @@
 # Phase 3: Compare target packages against baseline and generate reports
 # IMPORTANT: This file must be included with include_tasks from a play that targets localhost
 # This phase requires facts from baseline and all target servers to be available
-- name: "Resolve baseline packages list (from hostvars or fallback file)"
+- name: "Resolve baseline packages list (from controller baseline file)"
   set_fact:
-    baseline_packages_list: "{{ hostvars[groups['baseline_host'][0]]['baseline_packages'] | default(lookup('file', report_dir + '/baseline_packages.json') | from_json) }}"
+    baseline_packages_list: "{{ lookup('file', 'roles/package_manager/files/baseline').splitlines() | map('trim') | reject('equalto','') | list }}"
   run_once: yes
 
 - name: "Initialize report data structure"
   set_fact:
     report_data:
       generated_at: "{{ ansible_date_time.iso8601 }}"
-      baseline_hostname: "{{ hostvars[groups['baseline_host'][0]]['inventory_hostname'] }}"
+      baseline_hostname: "controller:roles/package_manager/files/baseline"
       baseline_packages_list: "{{ baseline_packages_list }}"
       baseline_count: "{{ baseline_packages_list | length }}"
       targets: []
