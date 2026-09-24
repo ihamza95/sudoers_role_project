@@ -4,7 +4,7 @@
 
 - name: "Resolve baseline packages list (from controller baseline file)"
   set_fact:
-    baseline_packages_list: "{{ lookup('file', 'roles/package_manager/files/baseline').splitlines() | map('trim') | reject('equalto','') | list }}"
+    baseline_packages_list: "{{ lookup('file', 'roles/package_manager/files/baseline').splitlines() | map('trim') | reject('equalto','') | unique | list }}"
   run_once: yes
 
 - name: "Initialize report data structure"
@@ -19,26 +19,34 @@
         total_targets: 0
         targets_with_extra_packages: 0
 
+- name: "Debug: show initialized report_data"
+  debug:
+    var: report_data
+  run_once: yes
+  delegate_to: localhost
+
 - name: "Collect target package data and calculate differences"
   set_fact:
-    report_data: "{{ report_data | combine({
-      'targets': report_data.targets + [{
-        'hostname': item,
-        'total_packages': hostvars[item].host_packages | length,
-        'extra_packages': hostvars[item].host_packages | difference(baseline_packages_list) | sort,
-        'extra_package_count': (hostvars[item].host_packages | difference(baseline_packages_list) | length)
-      }]
-    }, recursive=True) }}"
+    report_data: >-
+      {{ report_data | combine({
+        'targets': report_data.targets + [{
+          'hostname': item,
+          'total_packages': (hostvars[item].get('host_packages', []) | length),
+          'extra_packages': (hostvars[item].get('host_packages', []) | difference(baseline_packages_list) | sort),
+          'extra_package_count': (hostvars[item].get('host_packages', []) | difference(baseline_packages_list) | length)
+        }]
+      }, recursive=True) }}
   loop: "{{ groups[target_group] }}"
 
 - name: "Calculate summary statistics"
   set_fact:
-    report_data: "{{ report_data | combine({
-      'summary': {
-        'total_targets': report_data.targets | length,
-        'targets_with_extra_packages': report_data.targets | selectattr('extra_package_count', '>', 0) | list | length
-      }
-    }, recursive=True) }}"
+    report_data: >-
+      {{ report_data | combine({
+        'summary': {
+          'total_targets': report_data.targets | length,
+          'targets_with_extra_packages': report_data.targets | selectattr('extra_package_count', '>', 0) | list | length
+        }
+      }, recursive=True) }}
 
 - name: "Build list of non-compliant servers"
   set_fact:
@@ -47,9 +55,9 @@
 
 - name: "Accumulate non-compliant server entries"
   set_fact:
-    servers_with_issues: "{{ servers_with_issues + [{'hostname': item.hostname, 'unapproved_count': item.extra_package_count, 'unapproved_packages': item.extra_packages}] }}"
+    servers_with_issues: "{{ servers_with_issues + [{'hostname': item['hostname'], 'unapproved_count': item['extra_package_count'], 'unapproved_packages': item['extra_packages']}] }}"
   loop: "{{ report_data.targets }}"
-  when: item.extra_package_count > 0
+  when: item['extra_package_count'] > 0
   run_once: yes
 
 - name: "Generate current timestamp for filenames"
@@ -170,13 +178,13 @@
 - name: "Display detailed report for each target"
   debug:
     msg: |
-      Target: {{ item.hostname }}
-      Total Packages: {{ item.total_packages }}
-      Extra Packages: {{ item.extra_package_count }}
-      {% if item.extra_package_count > 0 %}
+      Target: {{ item['hostname'] }}
+      Total Packages: {{ item['total_packages'] }}
+      Extra Packages: {{ item['extra_package_count'] }}
+      {% if item['extra_package_count'] > 0 %}
       Extra Package List:
-        {{ item.extra_packages | join('\n  - ') }}
+        {{ item['extra_packages'] | join('\n  - ') }}
       {% endif %}
   loop: "{{ report_data.targets }}"
   loop_control:
-    label: "{{ item.hostname }}"
+    label: "{{ item['hostname'] }}"
